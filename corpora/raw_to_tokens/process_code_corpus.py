@@ -3,7 +3,7 @@ import numpy as np
 import os
 import pickle
 
-corpus_root = "/u/scr/isabelvp/data/habeascorpus-data-withComments/habeascorpus_tokens"
+corpus_root = "/n/home04/khalevy/habeascorpus-data-withComments/habeascorpus_tokens"
 
 def read_from_tokens():
     jfiles = []
@@ -23,17 +23,21 @@ def read_from_tokens():
                     continue
                 if "COMMENT" not in row[1]:
                     if row[2] == "":
-                        if row[0] is not "":
+                        if row[0] != "":
                             lst.append(row[0])
                     else:
                         words = row[2].split(" ")
-                        lst.extend([word for word in words if word is not ""])
+                        lst.extend([word for word in words if word != ""])
+            print(f"No error at file {i}, {jfiles[i]}")
         except:
-            print(f"Error at file {i}")
+            print(f"Error at file {i}, {jfiles[i]}")
             continue
 
 
     pickle.dump(lst, open(os.path.join(corpus_root, "all_tokens_list"), "wb"))
+    return lst
+
+allt = read_from_tokens()
 
 def split_corpus(lst, valid_size, test_size, seed=400):
     np.random.seed(seed)
@@ -52,5 +56,7 @@ def split_corpus(lst, valid_size, test_size, seed=400):
         test += rest_list[start:start + test_fifth]
         rest_list = rest_list[:start] + rest_list[start + test_fifth:]
     return rest_list, valid, test
-
-     
+train, val, test = split_corpus(allt, int(len(allt) * 0.15), int(len(allt) * 0.15))     
+pickle.dump(train, open(os.path.join(corpus_root, "train"), "wb"))
+pickle.dump(train, open(os.path.join(corpus_root, "valid"), "wb"))
+pickle.dump(train, open(os.path.join(corpus_root, "test"), "wb"))

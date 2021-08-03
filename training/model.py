@@ -8,7 +8,7 @@ from .weight_drop import WeightDrop
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, dropouth=0.5, dropouti=0.5, dropoute=0.1, wdrop=0, tie_weights=False):
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, dropouth=0.5, dropouti=0.5, dropoute=0.1, wdrop=0, tie_weights=False, stack = False):
         super(RNNModel, self).__init__()
         self.lockdrop = LockedDropout()
         self.idrop = nn.Dropout(dropouti)
@@ -54,7 +54,9 @@ class RNNModel(nn.Module):
         self.dropouth = dropouth
         self.dropoute = dropoute
         self.tie_weights = tie_weights
-
+        self.stack = stack
+        self.W_a = nn.Linear(nhid, 2)
+        self.W_n = nn.Linear(nhid, 5)
     def reset(self):
         if self.rnn_type == 'QRNN': [r.reset() for r in self.rnns]
 
@@ -64,15 +66,14 @@ class RNNModel(nn.Module):
         self.decoder.bias.data.fill_(0)
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, input, hidden, return_h=False):
+    def forward(self, input, hidden, mem = None, return_h=False):
         emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
-        #emb = self.idrop(emb)
-
+        print(emb.size)
+        print(self.dropouti)
         emb = self.lockdrop(emb, self.dropouti)
 
         raw_output = emb
         new_hidden = []
-        #raw_output, hidden = self.rnn(emb, hidden)
         raw_outputs = []
         outputs = []
         for l, rnn in enumerate(self.rnns):
@@ -81,17 +82,23 @@ class RNNModel(nn.Module):
             new_hidden.append(new_h)
             raw_outputs.append(raw_output)
             if l != self.nlayers - 1:
-                #self.hdrop(raw_output)
                 raw_output = self.lockdrop(raw_output, self.dropouth)
                 outputs.append(raw_output)
         hidden = new_hidden
-
-        output = self.lockdrop(raw_output, self.dropout)
+        if self.stack:
+            output = self.lockdrop(raw_output, self.dropout)
+            self.action_weights = self.softmax (self.W_a (ht)).view(-1)
+            self.new_elt = self.sigmoid (self.W_n(ht)).view(1, 5)
+            push_side = torch.cat ((self.new_elt, mem[:-1]), dim=0)
+            pop_side = torch.cat ((stack[1:], torch.zeros(1, self.memory_dim).to(device = "cuda:0")), dim=0)
+            stack = self.action_weights [0] * push_side + self.action_weights [1] * pop_side
         outputs.append(output)
 
         result = output.view(output.size(0)*output.size(1), output.size(2))
         if return_h:
             return result, hidden, raw_outputs, outputs
+        if self.stack:
+            return result, hidden, mem
         return result, hidden
 
     def init_hidden(self, bsz):
@@ -103,3 +110,41 @@ class RNNModel(nn.Module):
         elif self.rnn_type == 'QRNN' or self.rnn_type == 'GRU':
             return [weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else (self.ninp if self.tie_weights else self.nhid)).zero_()
                     for l in range(self.nlayers)]
+
+class SLSTM_Softmax (nn.Module):
+    def __init__(self, hidden_dim, output_size, vocab_size, n_layers=1, memory_size=104, memory_dim = 5):
+        super(SLSTM_Softmax, self).__init__()
+        self.vocab_size = vocab_size
+        self.output_size = output_size
+        self.n_layers = n_layers
+        self.hidden_dim = hidden_dim
+        
+        self.memory_size = memory_size
+        self.memory_dim = memory_dim
+        
+        self.lstm = nn.LSTM(self.vocab_size, self.hidden_dim, self.n_layers)
+
+        self.W_y = nn.Linear(self.hidden_dim, output_size)
+        self.W_n = nn.Linear(self.hidden_dim, self.memory_dim)
+        self.W_a = nn.Linear(self.hidden_dim, 2)
+        self.W_sh = nn.Linear (self.memory_dim, self.hidden_dim)
+        
+        # Actions -- push : 0 and pop: 1
+        self.softmax = nn.Softmax(dim=2) 
+        self.sigmoid = nn.Sigmoid ()
+    
+    def init_hidden (self):
+        return (torch.zeros (self.n_layers, 1, self.hidden_dim).to(device = "cuda:0"),
+                torch.zeros (self.n_layers, 1, self.hidden_dim).to(device = "cuda:0"))
+    
+    def forward(self, input, hidden0, stack, temperature=1.):
+        h0, c0 = hidden0
+        hidden0_bar = self.W_sh (stack[0]).view(1, 1, -1) + h0
+        ht, hidden = self.lstm(input, (hidden0_bar, c0))
+        output = self.sigmoid(self.W_y(ht)).view(-1, self.output_size)
+        self.action_weights = self.softmax (self.W_a (ht)).view(-1)
+        self.new_elt = self.sigmoid (self.W_n(ht)).view(1, self.memory_dim)
+        push_side = torch.cat ((self.new_elt, stack[:-1]), dim=0)
+        pop_side = torch.cat ((stack[1:], torch.zeros(1, self.memory_dim).to(device = "cuda:0")), dim=0)
+        stack = self.action_weights [0] * push_side + self.action_weights [1] * pop_side
+        return output, hidden, stack

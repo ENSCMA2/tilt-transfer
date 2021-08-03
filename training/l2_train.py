@@ -11,14 +11,10 @@ import pickle
 import training.model
 from training.splitcross import SplitCrossEntropyLoss
 
-from training.utils import batchify, get_batch, repackage_hidden, get_slice
+from training.utils import get_batch, repackage_hidden, get_slice
 
-args = pickle.load(open("/u/scr/isabelvp/multilingual-transfer/save/default-args", "rb"))
-#args.log_interval = 50
-#args.valid_interval = 50
-args.log_interval = 200
-args.valid_interval = 1000
-print(f"args: {args}")
+log_interval = 200
+valid_interval = 1000
 
 eval_batch_size = 10
 test_batch_size = 1
@@ -39,7 +35,7 @@ def l2_train(data, pret_model, pret_criterion, l1_test, seed,
     model = pret_model.cuda()
     criterion = pret_criterion.cuda()
     params = list(model.parameters()) + list(criterion.parameters())
-    optimizer = torch.optim.SGD(params, lr=start_lr, weight_decay=args.wdecay)
+    optimizer = torch.optim.SGD(params, lr=start_lr, weight_decay=0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=lr_patience, cooldown=1)
     if freeze_net:
@@ -78,11 +74,16 @@ def l2_train(data, pret_model, pret_criterion, l1_test, seed,
             loss_at_epoch = evaluate(model, criterion, val_data, eval_batch_size)
             test_loss_at_epoch = evaluate(model, criterion, test_data, test_batch_size)
             print(f"Loss {loss_at_epoch}, test loss {test_loss_at_epoch}")
+    print("Passed checkpoints")
     test_loss = evaluate(model, criterion, test_data, test_batch_size)
+    print("Test loss done")
+    print(test_loss)
     l1_test_loss = evaluate(model, criterion, l1_test, test_batch_size)
+    print("L1 test loss done")
     #NOTE this assumes that weights are tied, which they have been for all the
     #     experiments since the awd-lm main forces it.
     embeddings = model.encoder.weight.detach().cpu().numpy()
+    print("Embeddings done")
     return val_loss_list, test_loss, last_train_loss, overall_batch, epoch, \
            loss_at_epoch, test_loss_at_epoch, train_loss_at_epoch, \
            zero_shot_test, l1_test_loss, embeddings
@@ -97,17 +98,25 @@ def model_save(fn):
 # Training code
 ###############################################################################
 
+bpttval = 1
+batch_size_global = 80
 def evaluate(model, criterion, data_source, batch_size=10):
     # Turn on evaluation mode which disables dropout.
     model.eval()
+    print("model.eval() done")
     total_loss = 0
     hidden = model.init_hidden(batch_size)
-    for i in range(0, data_source.size(0) - 1, args.bptt):
-        data, targets = get_batch(data_source, i, args, evaluation=True)
+    print(f"hidden initialized, size {data_source.size(0)}")
+    for i in range(0, data_source.size(0) - 1):
+        data, targets = get_batch(data_source, i, bpttval, evaluation=True)
         output, hidden = model(data, hidden)
         total_loss += len(data) * criterion(model.decoder.weight, model.decoder.bias, output, targets).data
         hidden = repackage_hidden(hidden)
     return total_loss.item() / len(data_source)
+
+alpha = 0.05
+beta = 0.05
+clip = 1
 
 def train(model, criterion, train_data, val_data, overall_batch, epoch_batch,
           epoch_data_index, valid_time, val_loss_list, scheduler, num_lr_decreases):
@@ -115,18 +124,18 @@ def train(model, criterion, train_data, val_data, overall_batch, epoch_batch,
     model.train()
     total_loss = 0
     start_time = time.time()
-    hidden = model.init_hidden(args.batch_size)
+    hidden = model.init_hidden(batch_size_global)
     while epoch_data_index < train_data.size(0) - 1 - 1:
-        bptt = args.bptt if np.random.random() < 0.95 else args.bptt / 2.
+        bptt = bpttval if np.random.random() < 0.95 else bpttval / 2.
         # Prevent excessively small or negative sequence lengths
         seq_len = max(5, int(np.random.normal(bptt, 5)))
         # There's a very small chance that it could select a very long sequence length resulting in OOM
-        seq_len = min(seq_len, args.bptt + 10)
+        seq_len = min(seq_len, bpttval + 10)
 
         lr2 = optimizer.param_groups[0]['lr']
-        optimizer.param_groups[0]['lr'] = lr2 * seq_len / args.bptt
+        optimizer.param_groups[0]['lr'] = lr2 * seq_len / bpttval
         model.train()
-        data, targets = get_batch(train_data, epoch_data_index, args, seq_len=seq_len)
+        data, targets = get_batch(train_data, epoch_data_index, bpttval, seq_len=seq_len)
 
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
@@ -138,29 +147,29 @@ def train(model, criterion, train_data, val_data, overall_batch, epoch_batch,
 
         loss = raw_loss
         # Activiation Regularization
-        if args.alpha: loss = loss + sum(args.alpha * dropped_rnn_h.pow(2).mean() for dropped_rnn_h in dropped_rnn_hs[-1:])
+        if alpha: loss = loss + sum(alpha * dropped_rnn_h.pow(2).mean() for dropped_rnn_h in dropped_rnn_hs[-1:])
         # Temporal Activation Regularization (slowness)
-        if args.beta: loss = loss + sum(args.beta * (rnn_h[1:] - rnn_h[:-1]).pow(2).mean() for rnn_h in rnn_hs[-1:])
+        if beta: loss = loss + sum(beta * (rnn_h[1:] - rnn_h[:-1]).pow(2).mean() for rnn_h in rnn_hs[-1:])
         loss.backward()
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        if args.clip: torch.nn.utils.clip_grad_norm_(params, args.clip)
+        if clip: torch.nn.utils.clip_grad_norm_(params, clip)
         optimizer.step()
 
         total_loss += raw_loss.data
         optimizer.param_groups[0]['lr'] = lr2
-        if overall_batch % args.log_interval == 0 and overall_batch > 0:
-            cur_loss = total_loss.item() / args.log_interval
+        if overall_batch % log_interval == 0 and overall_batch > 0:
+            cur_loss = total_loss.item() / log_interval
             elapsed = time.time() - start_time
             print('| {:5d}/{:5d} batches | lr {:05.5f} | ms/batch {:5.2f} | '
                     'tr loss {:5.2f} | tr ppl {:8.2f} | bpc {:8.3f}'.format(
-                epoch_batch, len(train_data) // args.bptt, optimizer.param_groups[-1]['lr'],
-                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss), cur_loss / math.log(2)))
+                epoch_batch, len(train_data) // bpttval, optimizer.param_groups[-1]['lr'],
+                elapsed * 1000 / log_interval, cur_loss, math.exp(cur_loss), cur_loss / math.log(2)))
             last_train_loss = cur_loss
             total_loss = 0
             start_time = time.time()
 
-        if overall_batch % args.valid_interval == 0 and overall_batch > 0:
+        if overall_batch % valid_interval == 0 and overall_batch > 0:
             elapsed = time.time() - valid_time
             val_loss = evaluate(model, criterion, val_data, eval_batch_size)
             val_loss_list.append(val_loss)

@@ -6,7 +6,6 @@ import pickle
 import torch
 
 from corpora import data
-from paths import project_base_path
 from training.l2_train import l2_train
 from training.utils import batchify, get_batch, repackage_hidden, get_slice
 
@@ -21,6 +20,7 @@ args = parser.parse_args()
 args.cuda = True
 print(args)
 
+project_base_path = "/n/home04/khalevy/tilt-transfer"
 batch_size = 80
 eval_batch_size = 10
 test_batch_size = 1
@@ -94,7 +94,9 @@ def run():
         results["pret_final_val"].append(run_data[4][-1])
         results["l1_test"].append(l1_test_loss)
         results["embeddings"].append(embeddings)
+        print("About to pickle dump")
         pickle.dump(results, open(save_path, "wb"))
+        print(f"pickle dumped for trial {trial}")
 
 def load_corpus(data_path, cull_vocab=True, shuffle_vocab=False):
     if cull_vocab:

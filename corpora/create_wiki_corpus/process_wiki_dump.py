@@ -13,7 +13,7 @@ parser.add_argument('--dump-file', type=str, \
                     help='location of the wikipedia dump (uncompressed)')
 parser.add_argument('--output-file', type=str, \
                     help='Where to store the output corpus')
-parser.add_argument('--max-tokens', type=int, default=100000000, \
+parser.add_argument('--max-tokens', type=int, default=4000000, \
                     help='After how many tokens to stop')
 parser.add_argument('--min-tokens-for-article', type=int, default=300,
                     help="How many tokens does an article need to be considered")
@@ -29,8 +29,10 @@ def make_corpus(args):
     output_filename = args.output_file
     f = open(output_filename, "w+")
     f.close()
+    print("loaded dump file")
     nlp = stanfordnlp.Pipeline(processors="tokenize", lang=lang_code,
-        models_dir="/u/nlp/data/stanfordnlp_resources/")
+        models_dir="/n/home04/khalevy/stanfordnlp_resources/")
+    print("loaded nlp pipeline")
     total_tokens = 0
     checkpoint = 100000
     for event, elem in etree.iterparse(
@@ -66,6 +68,7 @@ def make_corpus(args):
                                 line = " ".join(words)
                                 with open(output_filename, "a+") as outfile:
                                     outfile.write(line + "\n")
+                    print(total_tokens)
         if total_tokens >= checkpoint:
             print(f"At {total_tokens} tokens")
             checkpoint += 100000
