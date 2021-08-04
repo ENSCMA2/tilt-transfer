@@ -10,7 +10,7 @@ this_file_path = os.path.join(os.getcwd(), __file__)
 project_path = os.path.split(os.path.split(this_file_path)[0])[0]
 print(project_path)
 sys.path.insert(0, project_path)
-
+import numpy as np
 from corpora.data import Corpus
 
 parser = argparse.ArgumentParser()

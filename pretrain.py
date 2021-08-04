@@ -236,7 +236,7 @@ def evaluate(data_source, batch_size=10):
     if args.stack:
         memory = torch.zeros (104, 5).to(device = "cuda:0")
     for i in range(0, data_source.size(0) - 1, args.bptt):
-        data, targets = get_batch(data_source, i, args, evaluation=True)
+        data, targets = get_batch(data_source, i, args.bptt, evaluation=True)
         if not args.stack:
             output, hidden = model(data, hidden)
         else:

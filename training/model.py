@@ -68,8 +68,6 @@ class RNNModel(nn.Module):
 
     def forward(self, input, hidden, mem = None, return_h=False):
         emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
-        print(emb.size)
-        print(self.dropouti)
         emb = self.lockdrop(emb, self.dropouti)
 
         raw_output = emb
@@ -85,10 +83,10 @@ class RNNModel(nn.Module):
                 raw_output = self.lockdrop(raw_output, self.dropouth)
                 outputs.append(raw_output)
         hidden = new_hidden
+        output = self.lockdrop(raw_output, self.dropout)
         if self.stack:
-            output = self.lockdrop(raw_output, self.dropout)
-            self.action_weights = self.softmax (self.W_a (ht)).view(-1)
-            self.new_elt = self.sigmoid (self.W_n(ht)).view(1, 5)
+            self.action_weights = nn.Softmax (self.W_a (output)).view(-1)
+            self.new_elt = nn.Sigmoid (self.W_n(output)).view(1, 5)
             push_side = torch.cat ((self.new_elt, mem[:-1]), dim=0)
             pop_side = torch.cat ((stack[1:], torch.zeros(1, self.memory_dim).to(device = "cuda:0")), dim=0)
             stack = self.action_weights [0] * push_side + self.action_weights [1] * pop_side
