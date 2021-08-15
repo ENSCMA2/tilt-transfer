@@ -57,6 +57,10 @@ class RNNModel(nn.Module):
         self.stack = stack
         self.W_a = nn.Linear(nhid, 2)
         self.W_n = nn.Linear(nhid, 5)
+        self.W_sh = nn.Linear (5, nhid)
+        self.new_elt = None
+        self.softmax = nn.Softmax(dim=2)
+        self.sigmoid = nn.Sigmoid ()
     def reset(self):
         if self.rnn_type == 'QRNN': [r.reset() for r in self.rnns]
 
@@ -67,6 +71,7 @@ class RNNModel(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden, mem = None, return_h=False):
+        print(type(hidden))
         emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
         emb = self.lockdrop(emb, self.dropouti)
 
@@ -76,7 +81,12 @@ class RNNModel(nn.Module):
         outputs = []
         for l, rnn in enumerate(self.rnns):
             current_input = raw_output
-            raw_output, new_h = rnn(raw_output, hidden[l])
+            if not self.stack:
+                raw_output, new_h = rnn(raw_output, hidden[l])
+            else:
+                h, c = hidden[l]
+                hidden0_bar = self.W_sh (mem[0]).view(1, 1, -1) + h
+                raw_output, new_h = rnn(raw_output, (hidden0_bar, c))
             new_hidden.append(new_h)
             raw_outputs.append(raw_output)
             if l != self.nlayers - 1:
@@ -88,8 +98,8 @@ class RNNModel(nn.Module):
             self.action_weights = nn.Softmax (self.W_a (output)).view(-1)
             self.new_elt = nn.Sigmoid (self.W_n(output)).view(1, 5)
             push_side = torch.cat ((self.new_elt, mem[:-1]), dim=0)
-            pop_side = torch.cat ((stack[1:], torch.zeros(1, self.memory_dim).to(device = "cuda:0")), dim=0)
-            stack = self.action_weights [0] * push_side + self.action_weights [1] * pop_side
+            pop_side = torch.cat ((stack[1:], torch.zeros(1, 5).to(device = "cuda:0")), dim=0)
+            mem = self.action_weights [0] * push_side + self.action_weights [1] * pop_side
         outputs.append(output)
 
         result = output.view(output.size(0)*output.size(1), output.size(2))
