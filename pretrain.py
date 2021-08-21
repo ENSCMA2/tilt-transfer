@@ -192,7 +192,7 @@ if not args.stack:
     print(args.emsize)
     model = model.RNNModel(args.model, args.num_embs, args.emsize, args.nhid, args.nlayers, args.dropout, args.dropouth, args.dropouti, args.dropoute, args.wdrop, args.tied)
 else:
-    model = model.RNNModel(args.model, args.num_embs, args.emsize, args.nhid, args.nlayers, args.dropout, args.dropouth, args.dropouti, args.dropoute, args.wdrop, args.tied, stack = True)
+    model = model.RNNModel(args.model, args.num_embs, args.nhid, args.nhid, args.nlayers, args.dropout, args.dropouth, args.dropouti, args.dropoute, args.wdrop, args.tied, stack = True)
 ###
 save_path = os.path.join(project_base_path, "models", "pretrained_models", args.data)
 if os.path.exists(save_fn):
@@ -272,7 +272,7 @@ def train():
         if not args.stack:
             output, hidden, rnn_hs, dropped_rnn_hs = model(data, hidden, return_h=True)
         else:
-            output, hidden, memory = model(data, hidden, mem = memory)
+            output, hidden, memory, rnn_hs, dropped_rnn_hs = model(data, hidden, mem = memory, return_h=True)
         raw_loss = criterion(model.decoder.weight, model.decoder.bias, output, targets)
 
         loss = raw_loss
